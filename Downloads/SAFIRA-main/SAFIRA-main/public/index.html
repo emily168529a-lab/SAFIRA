@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAFIRA - Safety & AI Platform</title>
+  <link rel="icon" type="image/png" href="images/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Leaflet CSS for Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+ <!-- Navigation Bar: Logo on left, links pushed to right -->
+<header class="navbar">
+  <div class="nav-container">
+    <div class="logo">
+      <a href="#home" class="brand-link">
+        <img src="images/logo.png" alt="SAFIRA Logo" class="brand-logo" />
+        <span class="brand-text">SAFIRA</span>
+      </a>
+    </div>
+    <ul class="nav-links">
+      <li><a href="#home">Home</a></li>
+      <li><a href="#report">Report Concern</a></li>
+      <li><a href="#dashboard">Safety Map & Dashboard</a></li>
+      <li><a href="#women">Women Section</a></li>
+      <li><a href="#children">Children Section</a></li>
+    </ul>
+  </div>
+</header>
+
+<main>
+    <!-- Wireframe Section 1: H1 Catchy Headline + Brand Script + Hero Image -->
+    <section id="home" class="hero-section">
+      <div class="container hero-grid">
+        <div class="hero-content">
+          <span class="eyebrow">Public & Personal Safety Intelligence</span>
+          <h1 class="hero-title">SAFIRA Platform</h1>
+          <p class="subtitle">AI-Driven Real-Time Protection & Community Intelligence</p>
+          <div class="hero-cta-group">
+            <a href="#report" class="btn btn-primary">Report a Concern</a>
+            <a href="#dashboard" class="btn btn-outline">Explore Live Map</a>
+          </div>
+        </div>
+        <div class="hero-media">
+          <div class="image-frame">
+            <img src="images/logo.png" alt="Safira Classical Emblem" class="hero-img" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Core Mission & Features Grid -->
+      <div class="container mission-cards">
+        <div class="card-grid">
+          <div class="card">
+            <h3>Our Mission</h3>
+            <p>Empower communities with anonymous, fast, and actionable safety insight using AI pattern recognition.</p>
+          </div>
+          <div class="card highlighted">
+            <h3>Features</h3>
+            <p>100% Anonymous reporting, real-time hotspot detection, color-coded risk maps, and dedicated safety zones.</p>
+          </div>
+          <div class="card">
+            <h3>Impact</h3>
+            <p>Closing safety gaps by bridging citizens, AI analytics, and protective preventive recommendations.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Wireframe Section 2: H2 Catchy Headline + Centered Context Banner -->
+    <section class="banner-section" data-page="home">
+      <div class="container banner-content">
+        <span class="banner-pill">Guaranteed Anonymity</span>
+        <h2 class="banner-headline">Your Voice Matters. Your Identity Stays Protected.</h2>
+        <p class="banner-subtext">
+          Every report feeds directly into our real-time spatial neural model, creating immediate 
+          predictive safety warnings for pedestrians, students, and night commuters.
+        </p>
+        <a href="#report" class="btn btn-light">File Anonymous Incident</a>
+      </div>
+    </section>
+
+    <!-- Wireframe Section 3: Two-Column Split (Incident Form + AI Analysis Output Box) -->
+    <section id="report" class="section">
+      <div class="container">
+        <div class="section-heading-center">
+          <span class="eyebrow">Instant Action</span>
+          <h2>Report a Concern</h2>
+          <p class="tagline">100% Anonymous | Instant AI Analysis</p>
+        </div>
+
+        <div class="two-column">
+          <!-- Incident Form -->
+          <form id="reportForm">
+            <label for="reporterType">Who is reporting?</label>
+            <select id="reporterType" required>
+              <option value="Women">Women</option>
+              <option value="Child">Child / Student</option>
+              <option value="General Public">General Public</option>
+            </select>
+
+            <label for="description">What happened? (Describe incident/concern)</label>
+            <textarea id="description" rows="4" placeholder="Describe safety issues, e.g., dark alley, suspicious activity..." required></textarea>
+
+            <label for="locationInput">Incident Location / Area</label>
+            <input type="text" id="locationInput" placeholder="Enter landmark, street name, or area (e.g. MG Road, Indiranagar)" required>
+            <div class="location-actions">
+              <button type="button" id="locateMeBtn" class="btn btn-outline">📍 Use My GPS</button>
+              <button type="button" id="pinOnMapBtn" class="btn btn-outline">Choose on Map</button>
+              <span>Click or drag the pin on the map below</span>
+            </div>
+            <p id="pinnedCoordsStatus" class="location-status" aria-live="polite">Choose your incident location on the map or use your current location.</p>
+            <div id="incidentMap" role="application" aria-label="Incident location map"></div>
+            <input type="hidden" id="latitude">
+            <input type="hidden" id="longitude">
+
+            <label for="reportTime">Time</label>
+            <input type="datetime-local" id="reportTime">
+
+            <button type="submit" class="btn btn-primary">Submit Report</button>
+          </form>
+
+          <!-- AI Output Box -->
+          <div id="aiOutputCard" class="card ai-card hidden">
+            <div class="ai-card-header">
+              <h3>🤖 AI Analysis Output</h3>
+              <span id="outSecurity" class="badge">-</span>
+            </div>
+            <p><strong>Category:</strong> <span id="outCategory">-</span></p>
+            <p><strong>Safety Recommendation:</strong></p>
+            <blockquote id="outRec">-</blockquote>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Wireframe Section 4: AI Safety Dashboard & Safety Map (Dark Navy Canvas) -->
+    <section id="dashboard" class="section dark-bg">
+      <div class="container">
+        <div class="dashboard-header-flex">
+          <div>
+            <span class="eyebrow light">Spatial Intelligence</span>
+            <h2>AI Safety Dashboard & Safety Map</h2>
+          </div>
+          <div class="map-legend">
+            <span><span class="dot red"></span> High Concern</span>
+            <span><span class="dot yellow"></span> Moderate Concern</span>
+            <span><span class="dot green"></span> Low Concern</span>
+          </div>
+        </div>
+
+        <!-- Leaflet Map Container -->
+        <div id="map" role="application" aria-label="Community safety map"></div>
+
+        <!-- Dashboard Stat Grid -->
+        <div class="dashboard-grid">
+          <div class="dash-card stat-card">
+            <h4>Total Reports</h4>
+            <span id="totalReportsCount" class="stat">0</span>
+          </div>
+          <div class="dash-card">
+            <h4>AI Generated Insights</h4>
+            <ul id="aiInsightsList"></ul>
+          </div>
+          <div class="dash-card">
+            <h4>Recommended Actions</h4>
+            <ul id="aiActionsList"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Wireframe Section 5: Women Dedicated Support Section -->
+    <!-- WOMEN SECTION -->
+  <section id="women" class="section">
+    <div class="container">
+      <div class="section-heading-center">
+        <span class="eyebrow">Preventive Shield</span>
+        <h2>Women Section</h2>
+        <p class="section-desc">Focused Safety Support for Everyday Protection</p>
+      </div>
+      <div class="card-grid four-col">
+        <div class="card service-tile clickable" onclick="openModal('workplace')">🏢 Workplace Safety</div>
+        <div class="card service-tile clickable" onclick="openModal('transport')">🚌 Transport Safety</div>
+        <div class="card service-tile clickable" onclick="openModal('public-spaces')">🏙️ Public Spaces</div>
+        <div class="card service-tile clickable" onclick="openModal('harassment')">⚠️ Harassment Concerns</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CHILDREN SECTION -->
+  <section id="children" class="section light-bg">
+    <div class="container">
+      <div class="section-heading-center">
+        <span class="eyebrow">Family & Schools</span>
+        <h2>Children Section</h2>
+        <p class="section-desc">Child-Friendly Reporting & Guardian Support</p>
+      </div>
+      <div class="card-grid four-col">
+        <div class="card service-tile light-accent clickable" onclick="openModal('simple-reporting')">🎈 Simple Options for Reporting</div>
+        <div class="card service-tile light-accent clickable" onclick="openModal('easy-language')">🗣️ Easy Language Interface</div>
+        <div class="card service-tile light-accent clickable" onclick="openModal('helpline')">📞 Helpline & Emergency Support</div>
+        <div class="card service-tile light-accent clickable" onclick="openModal('guardian')">🛡️ Guardian Guidance</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODAL POPUP BACKDROP & CONTAINER -->
+  <div id="infoModal" class="modal-overlay hidden" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modalTitle">Feature Details</h3>
+        <button class="modal-close-btn" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <!-- Content injected dynamically via JavaScript -->
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container footer-content">
+      <p>&copy; 2026 SAFIRA Safety Intelligence Platform. Built for community safety.</p>
+    </div>
+  </footer>
+
+  <!-- Leaflet JS & Logic -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
