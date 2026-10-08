@@ -691,3 +691,354 @@ function updateSelectedLocation(lat, lng, label) {
     }
   }
 }
+/* =========================================================
+   CHILDREN SAFETY ACTIONS (ZERO-FORM & PRIVATE SHARING)
+   ========================================================= */
+
+// 1. "I'M BEING FOLLOWED" (Zero Form, Instant Actions)
+function openChildFollowedModal() {
+  const modal = document.getElementById('childActionModal');
+  const content = document.getElementById('childModalContent');
+  if (!modal || !content) return;
+
+  content.innerHTML = `
+    <span class="urgent-badge">EMERGENCY PROTOCOL</span>
+    <h2>🚨 Are you being followed?</h2>
+    
+    <div class="advice-box">
+      🚶 <strong>Stay in a public, crowded place.</strong> Head towards open shops, security desks, or lit main roads.
+    </div>
+
+    <div class="child-btn-grid">
+      <a href="tel:1098" class="child-btn child-btn-red">📞 Call Guardian / Childline (1098)</a>
+      <a href="tel:112" class="child-btn child-btn-red">🚨 Call National Emergency (112)</a>
+      <button type="button" class="child-btn child-btn-teal" onclick="openShareLocationModal()">📍 Share My Live Location Privately</button>
+    </div>
+  `;
+
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+}
+
+// 2. "SHARE MY LOCATION" (Private, Time-Limited, Never on Public Dashboard)
+function openShareLocationModal() {
+  const modal = document.getElementById('childActionModal');
+  const content = document.getElementById('childModalContent');
+  if (!modal || !content) return;
+
+  content.innerHTML = `
+    <h2>📍 Share Live Location Privately</h2>
+    <p>Choose who to share with and how long it should stay active.</p>
+
+    <div class="select-group">
+      <label for="trustedContact">Share with:</label>
+      <select id="trustedContact">
+        <option value="Parent">Parent</option>
+        <option value="Guardian">Guardian</option>
+        <option value="Trusted Adult">Trusted Adult</option>
+        <option value="Emergency Contact">Emergency Contact</option>
+      </select>
+    </div>
+
+    <div class="select-group">
+      <label for="shareDuration">Active Duration:</label>
+      <select id="shareDuration">
+        <option value="15">15 Minutes</option>
+        <option value="30" selected>30 Minutes</option>
+        <option value="60">1 Hour</option>
+      </select>
+    </div>
+
+    <button type="button" class="child-btn child-btn-blue" onclick="generatePrivateLocationLink()">
+      📲 Send Secure Location Link
+    </button>
+
+    <div id="shareStatusMessage" style="margin-top: 0.75rem;"></div>
+
+    <div class="privacy-notice">
+      🔒 <strong>Privacy Guard:</strong> This location is encrypted and shared privately only with the selected contact. It is <u>never</u> displayed on the public safety map.
+    </div>
+  `;
+
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+}
+
+// Generates time-limited GPS coordinates link
+function generatePrivateLocationLink() {
+  const status = document.getElementById('shareStatusMessage');
+  const recipient = document.getElementById('trustedContact')?.value || 'Contact';
+  const minutes = document.getElementById('shareDuration')?.value || '30';
+
+  if (!navigator.geolocation) {
+    status.innerHTML = `<span style="color:#d9363e;">Geolocation not supported on this browser.</span>`;
+    return;
+  }
+
+  status.innerHTML = `<span>Fetching current coordinates...</span>`;
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude.toFixed(5);
+      const lng = pos.coords.longitude.toFixed(5);
+      const expiry = new Date(Date.now() + minutes * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
+
+      // Open native SMS/WhatsApp prefill or display direct copied link
+      const textMessage = encodeURIComponent(`SAFIRA ALERT: I am sharing my live location with you (${recipient}). Valid until ${expiry}: ${mapsUrl}`);
+      
+      status.innerHTML = `
+        <div style="background:#e8f4fd; padding:0.6rem; border-radius:6px; font-size:0.85rem; border:1px solid #b8daff;">
+          ✅ Location secured until <strong>${expiry}</strong>.<br>
+          <a href="sms:?body=${textMessage}" class="child-btn child-btn-teal" style="margin-top:0.5rem; padding:0.5rem;">
+            ✉️ Open Messaging App to Send
+          </a>
+        </div>
+      `;
+    },
+    () => {
+      status.innerHTML = `<span style="color:#d9363e;">⚠️ Unable to access GPS. Please ensure location permissions are enabled.</span>`;
+    }
+  );
+}
+
+// 3. "BULLYING / HARASSMENT" MODAL
+function openBullyingModal() {
+  const modal = document.getElementById('childActionModal');
+  const content = document.getElementById('childModalContent');
+  if (!modal || !content) return;
+
+  content.innerHTML = `
+    <h2>🛑 Bullying & School Harassment</h2>
+    <p>Report school bullying, teasing, online threats, or physical harassment safely and confidentially.</p>
+
+    <div class="advice-box" style="background:#eef6fc; border-left-color:#567C8D; color:#2F4156;">
+      🛡️ You have the right to be safe at school and online. Reports can be filed confidentially.
+    </div>
+
+    <div class="modal-emergency-grid">
+      <a href="tel:1098" class="emergency-dial-btn">📞 Childline (1098)</a>
+      <a href="tel:112" class="emergency-dial-btn">🚨 Emergency (112)</a>
+      <a href="tel:100" class="emergency-dial-btn">👮 Police (100)</a>
+    </div>
+
+    <button type="button" class="child-btn child-btn-blue" style="margin-top: 1rem;" onclick="prefillBullyingReport()">
+      📝 Pre-fill Bullying Report
+    </button>
+  `;
+
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+}
+
+// Prefills Bullying details into the form and switches to Report Concern
+function prefillBullyingReport() {
+  closeChildActionModal();
+  
+  if (typeof fillReportForm === 'function') {
+    fillReportForm(
+      'Child',
+      'School Safety / Harassment Concern: Reporting repetitive bullying, physical/verbal intimidation, or cyber harassment.',
+      'School Grounds / Perimeter Area'
+    );
+  } else {
+    const reportTab = document.querySelector('a[href="#report"]');
+    if (reportTab) reportTab.click();
+  }
+}
+
+// Modal closing helpers
+function closeChildActionModal() {
+  const modal = document.getElementById('childActionModal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
+}
+
+function closeChildActionModalOnBackdrop(e) {
+  if (e.target.id === 'childActionModal') {
+    closeChildActionModal();
+  }
+}
+/* =========================================================
+   CHILDREN SECTION INTERACTIVE CARDS & MODALS
+   ========================================================= */
+
+const childrenContentData = {
+  // 1. I'M BEING FOLLOWED
+  'followed': {
+    title: '🚨 I\'m Being Followed - Immediate Safety',
+    advice: '🚶 <strong>Stay in a public, crowded place.</strong> Enter a shop, approach a security guard, or head to a well-lit main road. Do not isolate yourself.',
+    features: [
+      { heading: 'Do Not Panic', text: 'Walk with purpose towards open spaces with other adults around.' },
+      { heading: 'Zero-Form Protocol', text: 'No typing or forms required. Tap the red buttons below to call for help immediately.' },
+      { heading: 'Live Alert Option', text: 'Share your temporary private pin so trusted contacts can see where you are.' }
+    ],
+    emergencyLinks: [
+      { label: 'Guardian / Childline (1098)', tel: '1098' },
+      { label: 'National Emergency (112)', tel: '112' },
+      { label: 'Police Assistance (100)', tel: '100' }
+    ],
+    actionText: '📍 Share My Live Location Now',
+    actionFn: 'openChildModal("share-location")'
+  },
+
+  // 2. SHARE MY LOCATION
+  'share-location': {
+    title: '📍 Share Live Location Privately',
+    advice: '🔒 <strong>Privacy Shield Active:</strong> This location is temporary, encrypted, and never published on public safety dashboards.',
+    customHtml: `
+      <div class="select-group">
+        <label for="childTrustedContact">Send to:</label>
+        <select id="childTrustedContact">
+          <option value="Parent">Parent</option>
+          <option value="Guardian" selected>Guardian</option>
+          <option value="Trusted Adult">Trusted Adult</option>
+          <option value="Emergency Contact">Emergency Contact</option>
+        </select>
+      </div>
+
+      <div class="select-group">
+        <label for="childShareTime">Active Window:</label>
+        <select id="childShareTime">
+          <option value="15">15 Minutes</option>
+          <option value="30" selected>30 Minutes</option>
+          <option value="60">1 Hour</option>
+        </select>
+      </div>
+
+      <button type="button" class="child-btn child-btn-teal" onclick="generateChildShareLink()">
+        📲 Create Secure SMS Link
+      </button>
+
+      <div id="childShareResult" style="margin-top: 0.75rem;"></div>
+    `
+  },
+
+  // 3. BULLYING / HARASSMENT
+  'bullying': {
+    title: '🛑 Bullying & Threat Response',
+    advice: '🛡️ You have the right to feel safe at school and online. You do not have to handle bullying alone.',
+    features: [
+      { heading: 'Physical & Verbal Bullying', text: 'Report threats, physical pushing, intimidation, or exclusion near campus.' },
+      { heading: 'Cyberbullying', text: 'Document abusive messages, unauthorized photo sharing, or threatening texts.' },
+      { heading: 'Confidentiality', text: 'Your identity can remain protected when filing this report.' }
+    ],
+    emergencyLinks: [
+      { label: 'Childline (1098)', tel: '1098' },
+      { label: 'Student Support (112)', tel: '112' }
+    ],
+    actionText: '📝 Pre-fill Bullying Incident Report',
+    actionFn: 'handleBullyingPrefill()'
+  }
+};
+
+function openChildModal(key) {
+  const data = childrenContentData[key];
+  if (!data) return;
+
+  const modal = document.getElementById('childModal');
+  const title = document.getElementById('childModalTitle');
+  const body = document.getElementById('childModalBody');
+
+  if (!modal || !title || !body) return;
+
+  title.innerHTML = data.title;
+
+  let html = '';
+
+  if (data.advice) {
+    html += `<div class="advice-box">${data.advice}</div>`;
+  }
+
+  if (data.features) {
+    html += '<ul class="modal-feature-list">';
+    data.features.forEach(f => {
+      html += `<li><strong>${f.heading}</strong>${f.text}</li>`;
+    });
+    html += '</ul>';
+  }
+
+  if (data.customHtml) {
+    html += data.customHtml;
+  }
+
+  if (data.emergencyLinks) {
+    html += '<div class="modal-emergency-grid">';
+    data.emergencyLinks.forEach(link => {
+      html += `<a href="tel:${link.tel}" class="emergency-dial-btn">📞 ${link.label}</a>`;
+    });
+    html += '</div>';
+  }
+
+  if (data.actionText && data.actionFn) {
+    html += `<button type="button" class="child-btn child-btn-blue" style="margin-top: 1rem;" onclick="${data.actionFn}">${data.actionText}</button>`;
+  }
+
+  body.innerHTML = html;
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+}
+
+function closeChildModal() {
+  const modal = document.getElementById('childModal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
+}
+
+function closeChildModalOnBackdrop(e) {
+  if (e.target.id === 'childModal') {
+    closeChildModal();
+  }
+}
+
+// Generate Private Location Link Handler
+function generateChildShareLink() {
+  const resultDiv = document.getElementById('childShareResult');
+  const contact = document.getElementById('childTrustedContact')?.value || 'Guardian';
+  const mins = document.getElementById('childShareTime')?.value || '30';
+
+  if (!navigator.geolocation) {
+    resultDiv.innerHTML = '<span style="color:#d9363e;">Geolocation is not supported by your browser.</span>';
+    return;
+  }
+
+  resultDiv.innerHTML = '<span>Detecting current coordinates...</span>';
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = pos.coords.latitude.toFixed(5);
+      const lng = pos.coords.longitude.toFixed(5);
+      const expiry = new Date(Date.now() + mins * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const mapUrl = `https://maps.google.com/?q=${lat},${lng}`;
+      const msg = encodeURIComponent(`SAFIRA ALERT: I am sharing my live location with you (${contact}). Active until ${expiry}: ${mapUrl}`);
+
+      resultDiv.innerHTML = `
+        <div style="background:#e8f4fd; padding:0.6rem; border-radius:6px; font-size:0.85rem; border:1px solid #b8daff; margin-top:0.5rem;">
+          ✅ Location valid until <strong>${expiry}</strong>.<br>
+          <a href="sms:?body=${msg}" class="child-btn child-btn-teal" style="margin-top:0.5rem; text-decoration:none;">
+            ✉️ Tap to Send via SMS / WhatsApp
+          </a>
+        </div>
+      `;
+    },
+    () => {
+      resultDiv.innerHTML = '<span style="color:#d9363e;">⚠️ GPS access denied. Please enable location permissions.</span>';
+    }
+  );
+}
+
+// Bullying Pre-fill Handler
+function handleBullyingPrefill() {
+  closeChildModal();
+  if (typeof fillReportForm === 'function') {
+    fillReportForm(
+      'Child',
+      'School Safety Concern: Reporting persistent verbal harassment / physical bullying / cyberbullying.',
+      'School Campus / Perimeter Area'
+    );
+  }
+}

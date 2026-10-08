@@ -209,21 +209,30 @@
   </section>
 
   <!-- CHILDREN SECTION -->
-  <section id="children" class="section light-bg">
-    <div class="container">
-      <div class="section-heading-center">
-        <span class="eyebrow">Family & Schools</span>
-        <h2>Children Section</h2>
-        <p class="section-desc">Child-Friendly Reporting & Guardian Support</p>
-      </div>
-      <div class="card-grid four-col">
-        <div class="card service-tile light-accent clickable" onclick="openModal('simple-reporting')">🎈 Simple Options for Reporting</div>
-        <div class="card service-tile light-accent clickable" onclick="openModal('easy-language')">🗣️ Easy Language Interface</div>
-        <div class="card service-tile light-accent clickable" onclick="openModal('helpline')">📞 Helpline & Emergency Support</div>
-        <div class="card service-tile light-accent clickable" onclick="openModal('guardian')">🛡️ Guardian Guidance</div>
-      </div>
-    </div>
-  </section>
+  <section id="children" class="section-container">
+  <div class="section-header">
+    <span class="sub-badge">PROTECTIVE SHIELD</span>
+    <h2>CHILDREN SECTION</h2>
+    <p class="section-subtext">Immediate Safety & Guided Help for Young Individuals</p>
+  </div>
+
+  <div class="cards-grid">
+  <div class="action-card" onclick="openChildModal('followed')">
+    <span class="card-icon">🚨</span>
+    <span class="card-label">I'm Being Followed</span>
+  </div>
+
+  <div class="action-card" onclick="openChildModal('share-location')">
+    <span class="card-icon">📍</span>
+    <span class="card-label">Share My Location</span>
+  </div>
+
+  <div class="action-card" onclick="openChildModal('bullying')">
+    <span class="card-icon">🛑</span>
+    <span class="card-label">Bullying / Harassment</span>
+  </div>
+</div>
+</section>
 
   <!-- MODAL POPUP BACKDROP & CONTAINER -->
   <div id="infoModal" class="modal-overlay hidden" onclick="closeModalOnBackdrop(event)">
@@ -247,5 +256,16 @@
   <!-- Leaflet JS & Logic -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="app.js"></script>
+
+
+  <div id="childModal" class="modal-overlay hidden" onclick="closeChildModalOnBackdrop(event)">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="childModalTitle"></h3>
+      <button type="button" class="modal-close-btn" onclick="closeChildModal()">&times;</button>
+    </div>
+    <div id="childModalBody"></div>
+  </div>
+</div>
 </body>
 </html>
