@@ -47,6 +47,10 @@ main {
   flex: 1;
 }
 
+body[data-active-page="children"] main {
+  background-color: var(--white);
+}
+
 .container {
   width: 90%;
   max-width: 1180px;
@@ -623,6 +627,62 @@ blockquote {
 .service-tile.light-accent {
   background-color: var(--beige);
   border-color: rgba(86, 124, 141, 0.2);
+}
+
+.location-sharing {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.2fr);
+  gap: 2rem;
+  align-items: start;
+  max-width: 900px;
+  margin: 3rem auto 0;
+  padding: 2rem 0 1rem;
+  border-top: 1px solid rgba(86, 124, 141, 0.2);
+}
+
+.location-sharing-heading h3 {
+  font-family: var(--font-serif);
+  color: var(--navy);
+  font-size: 1.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.location-sharing-heading p,
+.share-privacy-note {
+  color: #4b6272;
+  font-size: 0.9rem;
+}
+
+.share-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1.25rem;
+  background: #f8fafb;
+  border: 1px solid rgba(86, 124, 141, 0.2);
+  border-radius: var(--radius-sm);
+}
+
+.share-privacy-note {
+  font-size: 0.82rem;
+}
+
+.share-actions,
+.share-link-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.share-link-row input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.share-form .btn {
+  padding: 0.7rem 1rem;
+  font-size: 0.88rem;
 }
 
 /* =========================================================

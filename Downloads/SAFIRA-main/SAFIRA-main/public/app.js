@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initMap();
   loadSafetyData();
   setupNavigation();
+  setupLiveLocationSharing();
 
   // Submit Incident Report
   document.getElementById('reportForm').addEventListener('submit', async (e) => {
@@ -84,6 +85,7 @@ function showPage(pageId) {
   document.querySelectorAll('.nav-links a').forEach(link => {
     link.classList.toggle('active', link.getAttribute('href') === `#${pageId}`);
   });
+  document.body.dataset.activePage = pageId;
 
   if (pageId === 'dashboard' && map) {
     setTimeout(() => {
@@ -675,4 +677,108 @@ function updateSelectedLocation(lat, lng, label) {
       });
     }
   }
+}
+
+function setupLiveLocationSharing() {
+  const form = document.getElementById('shareLocationForm');
+  if (!form) return;
+
+  const status = document.getElementById('shareStatus');
+  const result = document.getElementById('shareResult');
+  const linkInput = document.getElementById('shareLink');
+  const startButton = document.getElementById('startShareBtn');
+  const stopButton = document.getElementById('stopShareBtn');
+  const smsLink = document.getElementById('sendShareAlertLink');
+  let token = null;
+  let watchId = null;
+  let expiryTimer = null;
+  let lastUpdateAt = 0;
+
+  function stopWatching() {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    if (expiryTimer) clearTimeout(expiryTimer);
+    expiryTimer = null;
+  }
+
+  async function stopSharing(message = 'Live location sharing stopped.') {
+    stopWatching();
+    if (token) {
+      await fetch(`/api/location-shares/${encodeURIComponent(token)}`, { method: 'DELETE' }).catch(() => {});
+    }
+    token = null;
+    stopButton.classList.add('hidden');
+    startButton.disabled = false;
+    status.textContent = message;
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!navigator.geolocation) {
+      status.textContent = 'Live location requires browser location access. This browser does not support GPS.';
+      return;
+    }
+
+    startButton.disabled = true;
+    status.textContent = 'Getting your current location...';
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      try {
+        const response = await fetch('/api/location-shares', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            phoneNumber: document.getElementById('sharePhone').value.trim(),
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not start location sharing.');
+
+        token = data.token;
+        linkInput.value = data.shareUrl;
+        result.classList.remove('hidden');
+        stopButton.classList.remove('hidden');
+        const phone = document.getElementById('sharePhone').value.trim();
+        const smsBody = `I am sharing my live location with you for the next hour: ${data.shareUrl}`;
+        smsLink.href = `sms:${phone}?body=${encodeURIComponent(smsBody)}`;
+        smsLink.classList.toggle('hidden', data.sent);
+        status.textContent = data.sent
+          ? 'Live location is sharing. SMS alert sent to your trusted contact.'
+          : 'Live location is sharing. Your phone can open a prefilled SMS alert; tap Open SMS alert, then Send.';
+
+        const remaining = new Date(data.expiresAt).getTime() - Date.now();
+        expiryTimer = setTimeout(() => stopSharing('The one-hour live-location share has expired.'), Math.max(remaining, 0));
+        lastUpdateAt = Date.now();
+        watchId = navigator.geolocation.watchPosition(async (nextPosition) => {
+          if (!token || Date.now() - lastUpdateAt < 10000) return;
+          lastUpdateAt = Date.now();
+          await fetch(`/api/location-shares/${encodeURIComponent(token)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ latitude: nextPosition.coords.latitude, longitude: nextPosition.coords.longitude })
+          }).catch(() => {});
+        }, () => {
+          status.textContent = 'Sharing the last known location; GPS updates are temporarily unavailable.';
+        }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+      } catch (error) {
+        status.textContent = error.message;
+        startButton.disabled = false;
+      }
+    }, () => {
+      status.textContent = 'Location permission was denied or GPS is unavailable. Allow location access and try again.';
+      startButton.disabled = false;
+    }, { enableHighAccuracy: true, timeout: 15000 });
+  });
+
+  stopButton.addEventListener('click', () => stopSharing());
+  document.getElementById('copyShareLinkBtn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(linkInput.value);
+      status.textContent = 'Private location link copied.';
+    } catch {
+      linkInput.select();
+      status.textContent = 'Select and copy the private location link.';
+    }
+  });
 }

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Shared Live Location | SAFIRA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .shared-location-page { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; background: #f5efeb; }
+    .shared-location-header { padding: 1.25rem 5vw; background: #fff; border-bottom: 1px solid #dbe5ea; }
+    .shared-location-header h1 { color: #2f4156; font: 700 1.45rem 'Cinzel', Georgia, serif; }
+    .shared-location-content { width: min(1100px, 90vw); margin: 2rem auto; display: grid; grid-template-rows: auto minmax(320px, 1fr); gap: 1rem; }
+    .shared-location-status { color: #2f4156; }
+    #sharedMap { min-height: 320px; border: 1px solid #c8d9e6; border-radius: 8px; }
+    @media (max-width: 600px) { .shared-location-content { margin: 1rem auto; grid-template-rows: auto minmax(280px, 1fr); } }
+  </style>
+</head>
+<body>
+  <main class="shared-location-page">
+    <header class="shared-location-header"><h1>SAFIRA live location</h1></header>
+    <section class="shared-location-content" aria-label="Shared live map">
+      <p id="sharedLocationStatus" class="shared-location-status" aria-live="polite">Loading shared location...</p>
+      <div id="sharedMap" role="application" aria-label="Map with shared current location"></div>
+    </section>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const token = location.pathname.split('/').pop();
+    const status = document.getElementById('sharedLocationStatus');
+    const sharedMap = L.map('sharedMap').setView([12.9849, 77.7289], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(sharedMap);
+    let marker;
+
+    async function refreshSharedLocation() {
+      try {
+        const response = await fetch(`/api/location-shares/${encodeURIComponent(token)}`);
+        const data = await response.json();
+        if (!response.ok) {
+          status.textContent = data.error || 'This location link is no longer available.';
+          clearInterval(refreshTimer);
+          return;
+        }
+        const point = [data.latitude, data.longitude];
+        if (marker) marker.setLatLng(point);
+        else marker = L.marker(point).addTo(sharedMap);
+        sharedMap.setView(point, Math.max(sharedMap.getZoom(), 15));
+        status.textContent = `Last updated ${new Date(data.updatedAt).toLocaleTimeString()} · Link expires ${new Date(data.expiresAt).toLocaleTimeString()}`;
+      } catch {
+        status.textContent = 'Could not update location. Check your connection.';
+      }
+    }
+
+    refreshSharedLocation();
+    const refreshTimer = setInterval(refreshSharedLocation, 10000);
+  </script>
+</body>
+</html>

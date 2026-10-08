@@ -207,6 +207,31 @@
         <div class="card service-tile light-accent clickable" onclick="openModal('helpline')">📞 Helpline & Emergency Support</div>
         <div class="card service-tile light-accent clickable" onclick="openModal('guardian')">🛡️ Guardian Guidance</div>
       </div>
+      <div class="location-sharing" aria-labelledby="shareLocationTitle">
+        <div class="location-sharing-heading">
+          <span class="eyebrow">Trusted Contact</span>
+          <h3 id="shareLocationTitle">Share Live Location</h3>
+          <p>Send a map link to someone you trust. Sharing stops automatically after one hour.</p>
+        </div>
+        <form id="shareLocationForm" class="share-form">
+          <label for="sharePhone">Trusted contact's phone number</label>
+          <input id="sharePhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+14155552671" pattern="\\+[1-9][0-9]{7,14}" title="Use international format, for example +14155552671." required>
+          <p class="share-privacy-note">Your location is shared only after you start. Anyone with the private link can see it until it expires or you stop sharing.</p>
+          <div class="share-actions">
+            <button id="startShareBtn" type="submit" class="btn btn-primary">Start sharing and alert</button>
+            <button id="stopShareBtn" type="button" class="btn btn-outline hidden">Stop sharing</button>
+          </div>
+          <div id="shareResult" class="share-result hidden" aria-live="polite">
+            <label for="shareLink">Private live map link</label>
+            <div class="share-link-row">
+              <input id="shareLink" type="url" readonly>
+              <button id="copyShareLinkBtn" type="button" class="btn btn-outline">Copy link</button>
+            </div>
+            <a id="sendShareAlertLink" class="btn btn-outline hidden" href="#">Open SMS alert</a>
+          </div>
+          <p id="shareStatus" class="location-status" aria-live="polite">Enter a trusted contact's number to begin.</p>
+        </form>
+      </div>
     </div>
   </section>
 
