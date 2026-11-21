@@ -1,42 +1,58 @@
 let map;
 let zoneLayers = [];
 let reportMarkers = [];
+let policeRadiusCircle = null;
+const POLICE_RADIUS_METERS = 5000;
+let policeDirectory = null;
+let policeStationMarkers = [];
+let currentUserLocation = null;
+let currentLocationMarker = null;
+let reportLocationMarker = null;
+let reportVerificationChallengeId = null;
+let reportVerificationPhone = null;
+let reportVerificationVerified = false;
+let activeLocationShareToken = null;
+let activeLocationShareExpiresAt = null;
+let activeLocationShareWatchId = null;
+let activeLocationShareTimer = null;
+let activeLocationShareStatus = null;
+let lastLocationShareUpdateAt = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
   loadSafetyData();
+  loadPoliceStations();
   setupNavigation();
+  setupReportLocationWarning();
+  setupReportVerification();
 
   // Submit Incident Report
   document.getElementById('reportForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const payload = {
-      reporterType: document.getElementById('reporterType').value,
-      description: document.getElementById('description').value,
-      latitude: document.getElementById('latitude').value,
-      longitude: document.getElementById('longitude').value,
-      time: document.getElementById('reportTime').value || new Date().toISOString()
-    };
-
-    try {
-      const response = await fetch('/api/reports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await response.json();
-      displayAIOutput(data.aiOutput);
-      loadSafetyData();
-      document.getElementById('reportForm').reset();
-    } catch (err) {
-      console.error('Error filing report:', err);
+    const payload = getReportPayload();
+    if (!isValidLocation(payload.latitude, payload.longitude)) {
+      document.getElementById('reportSubmitStatus').textContent = 'Enter valid latitude and longitude coordinates.';
+      return;
     }
+
+    const reportLocation = { latitude: Number(payload.latitude), longitude: Number(payload.longitude) };
+    updateSelectedLocation(reportLocation.latitude, reportLocation.longitude, 'Report location');
+    const outsideGpsRadius = !currentUserLocation ||
+      getDistanceMeters(currentUserLocation, reportLocation) > POLICE_RADIUS_METERS;
+    const outsideDirectory = Boolean(policeDirectory && !isWithinDirectoryCoverage(reportLocation));
+
+    if (outsideGpsRadius || outsideDirectory || !policeDirectory) {
+      showReportLocationWarning(payload, outsideGpsRadius, outsideDirectory);
+      return;
+    }
+
+    await submitReport(payload);
   });
 
   // Submit Zone Overlay
-  document.getElementById('zoneForm').addEventListener('submit', async (e) => {
+  const zoneForm = document.getElementById('zoneForm');
+  if (zoneForm) zoneForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const newZone = {
@@ -65,21 +81,35 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setupNavigation() {
-  const navLinks = document.querySelectorAll('.nav-links a');
+  const sectionLinks = document.querySelectorAll('a[href^="#"]');
 
-  navLinks.forEach(link => {
+  sectionLinks.forEach(link => {
+    const targetId = link.getAttribute('href').slice(1);
+    const target = document.getElementById(targetId);
+    if (!target || target.tagName !== 'SECTION') return;
+
     link.addEventListener('click', (e) => {
       e.preventDefault();
-      const targetId = link.getAttribute('href').replace('#', '');
-      showPage(targetId);
+      showPage(targetId, true);
     });
   });
 
-  // Start on home page
-  showPage('home');
+  window.addEventListener('hashchange', () => {
+    const pageId = window.location.hash.slice(1);
+    const target = document.getElementById(pageId);
+    showPage(target && target.tagName === 'SECTION' ? pageId : 'home');
+  });
+
+  const initialPageId = window.location.hash.slice(1);
+  const initialTarget = document.getElementById(initialPageId);
+  showPage(initialTarget && initialTarget.tagName === 'SECTION' ? initialPageId : 'home');
 }
 
-function showPage(pageId) {
+function showPage(pageId, updateHistory = false) {
+  if (updateHistory && window.location.hash !== `#${pageId}`) {
+    window.history.pushState(null, '', `#${pageId}`);
+  }
+
   const sections = document.querySelectorAll('section');
 
   sections.forEach(sec => {
@@ -89,7 +119,17 @@ function showPage(pageId) {
       sec.style.display = 'none';
     }
   });
-  
+
+  const homeBanner = document.querySelector('.banner-section');
+  if (homeBanner) homeBanner.style.display = pageId === 'home' ? 'block' : 'none';
+
+  document.querySelectorAll('.nav-links a').forEach(link => {
+    link.classList.toggle('active', link.hash === `#${pageId}`);
+  });
+
+  if (pageId === 'report' || pageId === 'dashboard') {
+    requestCurrentLocation();
+  }
 
   // Fix Leaflet map sizing issue on tab switch
   if (pageId === 'dashboard' && map) {
@@ -107,11 +147,412 @@ function initMap() {
   }).addTo(map);
 
   map.on('click', (e) => {
-    document.getElementById('zoneLat').value = e.latlng.lat.toFixed(5);
-    document.getElementById('zoneLng').value = e.latlng.lng.toFixed(5);
-    document.getElementById('latitude').value = e.latlng.lat.toFixed(5);
-    document.getElementById('longitude').value = e.latlng.lng.toFixed(5);
+    const zoneLat = document.getElementById('zoneLat');
+    const zoneLng = document.getElementById('zoneLng');
+    if (zoneLat) zoneLat.value = e.latlng.lat.toFixed(5);
+    if (zoneLng) zoneLng.value = e.latlng.lng.toFixed(5);
+    updateSelectedLocation(e.latlng.lat, e.latlng.lng, 'Pinned map location');
   });
+}
+
+async function loadPoliceStations() {
+  const status = document.getElementById('nearbyStationsStatus');
+  if (status) status.textContent = 'Loading the locally stored Bengaluru station directory...';
+
+  try {
+    const response = await fetch('/data/bengaluru-police-stations.json');
+    if (!response.ok) throw new Error('Unable to load the local station directory.');
+
+    const directory = await response.json();
+    const stationsAreValid = directory && Array.isArray(directory.stations) &&
+      directory.stations.length > 0 &&
+      directory.stations.every(station =>
+        typeof station.name === 'string' &&
+        Number.isFinite(station.latitude) &&
+        Number.isFinite(station.longitude));
+    if (!stationsAreValid || !directory.coverage) {
+      throw new Error('The local station directory has an invalid format.');
+    }
+
+    policeDirectory = directory;
+    if (currentUserLocation) {
+      renderNearbyStations();
+    } else if (status) {
+      status.textContent = 'Allow GPS to see mapped stations within 5 km.';
+    }
+  } catch (error) {
+    if (status) status.textContent = 'Nearby stations are unavailable because the local station directory could not be loaded.';
+    console.error('Error loading police station directory:', error);
+  }
+}
+
+function isValidLocation(latitude, longitude) {
+  if (latitude === '' || longitude === '') return false;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  return Number.isFinite(lat) && lat >= -90 && lat <= 90 &&
+    Number.isFinite(lng) && lng >= -180 && lng <= 180;
+}
+
+function getDistanceMeters(first, second) {
+  const earthRadiusMeters = 6371000;
+  const toRadians = Math.PI / 180;
+  const latitudeDifference = (second.latitude - first.latitude) * toRadians;
+  const longitudeDifference = (second.longitude - first.longitude) * toRadians;
+  const firstLatitude = first.latitude * toRadians;
+  const secondLatitude = second.latitude * toRadians;
+  const haversine = Math.sin(latitudeDifference / 2) ** 2 +
+    Math.cos(firstLatitude) * Math.cos(secondLatitude) *
+    Math.sin(longitudeDifference / 2) ** 2;
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function isWithinDirectoryCoverage(location) {
+  if (!policeDirectory) return false;
+  const { coverage } = policeDirectory;
+  return location.latitude >= coverage.minLatitude &&
+    location.latitude <= coverage.maxLatitude &&
+    location.longitude >= coverage.minLongitude &&
+    location.longitude <= coverage.maxLongitude;
+}
+
+function getStationsByDistance(location) {
+  if (!policeDirectory) return [];
+  return policeDirectory.stations
+    .map(station => ({
+      ...station,
+      distanceMeters: getDistanceMeters(location, {
+        latitude: station.latitude,
+        longitude: station.longitude
+      })
+    }))
+    .sort((first, second) => first.distanceMeters - second.distanceMeters);
+}
+
+function formatStationDistance(distanceMeters) {
+  if (distanceMeters < 1000) return `${Math.round(distanceMeters)} m`;
+  return `${(distanceMeters / 1000).toFixed(1)} km`;
+}
+
+function makeStationListItem(station) {
+  const item = document.createElement('li');
+  item.className = 'station-list-item';
+
+  const name = document.createElement('span');
+  name.className = 'station-name';
+  name.textContent = station.name;
+
+  const distance = document.createElement('span');
+  distance.className = 'station-distance';
+  distance.textContent = formatStationDistance(station.distanceMeters);
+
+  const details = document.createElement('span');
+  details.className = 'station-details';
+  details.appendChild(distance);
+
+  if (typeof station.phone === 'string') {
+    const phone = station.phone.replace(/[^\d+]/g, '');
+    if (/^\+?\d{7,15}$/.test(phone)) {
+      const callLink = document.createElement('a');
+      callLink.className = 'station-phone';
+      callLink.href = `tel:${phone}`;
+      callLink.textContent = `Call ${station.phone}`;
+      details.appendChild(callLink);
+    }
+  }
+
+  item.append(name, details);
+  return item;
+}
+
+function renderNearbyStations() {
+  const status = document.getElementById('nearbyStationsStatus');
+  const list = document.getElementById('nearbyStationsList');
+  if (!status || !list || !map) return;
+
+  policeStationMarkers.forEach(marker => map.removeLayer(marker));
+  policeStationMarkers = [];
+  list.replaceChildren();
+
+  if (!policeDirectory) {
+    status.textContent = 'The local station directory is unavailable.';
+    return;
+  }
+
+  if (!currentUserLocation) {
+    status.textContent = 'Allow GPS to see mapped stations within 5 km.';
+    return;
+  }
+
+  if (!isWithinDirectoryCoverage(currentUserLocation)) {
+    status.textContent = 'The locally stored station directory covers Bengaluru and nearby areas only; this GPS location is outside its coverage.';
+    return;
+  }
+
+  const stations = getStationsByDistance(currentUserLocation)
+    .filter(station => station.distanceMeters <= POLICE_RADIUS_METERS);
+
+  if (stations.length === 0) {
+    status.textContent = 'No mapped police stations were found within 5 km of your GPS location.';
+    return;
+  }
+
+  status.textContent = `${stations.length} mapped station${stations.length === 1 ? '' : 's'} within 5 km, sorted by straight-line distance from your GPS location.`;
+
+  stations.forEach(station => {
+    list.appendChild(makeStationListItem(station));
+    const marker = L.circleMarker([station.latitude, station.longitude], {
+      color: '#1d4ed8',
+      fillColor: '#2563eb',
+      fillOpacity: 1,
+      radius: 7,
+      weight: 2
+    }).addTo(map);
+
+    const popup = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = station.name;
+    const distance = document.createElement('div');
+    distance.textContent = `${formatStationDistance(station.distanceMeters)} straight-line distance from your current GPS location`;
+    popup.append(name, distance);
+    marker.bindPopup(popup);
+    policeStationMarkers.push(marker);
+  });
+}
+
+function getReportPayload() {
+  return {
+    reporterType: document.getElementById('reporterType').value,
+    description: document.getElementById('description').value,
+    latitude: document.getElementById('latitude').value,
+    longitude: document.getElementById('longitude').value,
+    time: document.getElementById('reportTime').value || new Date().toISOString()
+  };
+}
+
+function setupReportLocationWarning() {
+  const continueButton = document.getElementById('continueReportSubmit');
+  const useCurrentLocationButton = document.getElementById('useCurrentLocationForReport');
+
+  ['latitude', 'longitude'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      if (!document.getElementById('reportStationWarning').classList.contains('hidden')) {
+        hideReportLocationWarning();
+      }
+    });
+  });
+
+  continueButton.addEventListener('click', async () => {
+    const payload = getReportPayload();
+    if (!isValidLocation(payload.latitude, payload.longitude)) {
+      document.getElementById('reportSubmitStatus').textContent = 'Enter valid latitude and longitude coordinates.';
+      return;
+    }
+    hideReportLocationWarning();
+    await submitReport(payload);
+  });
+
+  useCurrentLocationButton.addEventListener('click', () => {
+    if (!currentUserLocation) return;
+    updateSelectedLocation(currentUserLocation.latitude, currentUserLocation.longitude, 'Current GPS location');
+    document.getElementById('reportSubmitStatus').textContent = '';
+    hideReportLocationWarning();
+  });
+}
+
+function setupReportVerification() {
+  const phoneInput = document.getElementById('reportPhoneInput');
+  phoneInput.addEventListener('input', () => {
+    if (reportVerificationPhone && phoneInput.value.trim() !== reportVerificationPhone) {
+      resetReportOtpVerification('Phone number changed. Send a new OTP to verify it.');
+    }
+  });
+  document.getElementById('sendReportOtpButton').addEventListener('click', sendReportOtp);
+  document.getElementById('verifyReportOtpButton').addEventListener('click', verifyReportOtp);
+  resetReportOtpVerification();
+}
+
+function resetReportOtpVerification(message) {
+  reportVerificationChallengeId = null;
+  reportVerificationPhone = null;
+  reportVerificationVerified = false;
+  document.getElementById('reportOtpFields').classList.add('hidden');
+  document.getElementById('reportOtpInput').value = '';
+  document.getElementById('reportOtpInput').disabled = false;
+  document.getElementById('submitReportButton').disabled = true;
+  document.getElementById('sendReportOtpButton').disabled = false;
+  document.getElementById('sendReportOtpButton').textContent = 'Send OTP';
+  document.getElementById('reportVerificationStatus').textContent =
+    message || 'Verify your phone to enable report submission.';
+}
+
+async function sendReportOtp() {
+  const phoneInput = document.getElementById('reportPhoneInput');
+  const sendButton = document.getElementById('sendReportOtpButton');
+  const status = document.getElementById('reportVerificationStatus');
+  if (!phoneInput.reportValidity()) return;
+
+  const phone = phoneInput.value.trim();
+  sendButton.disabled = true;
+  status.textContent = 'Sending OTP...';
+
+  try {
+    const response = await fetch('/api/report-otp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to send an OTP.');
+    if (phoneInput.value.trim() !== phone) {
+      resetReportOtpVerification('Phone number changed while sending. Send a new OTP to verify it.');
+      return;
+    }
+
+    reportVerificationChallengeId = data.challengeId;
+    reportVerificationPhone = phone;
+    reportVerificationVerified = false;
+    document.getElementById('reportOtpInput').value = '';
+    document.getElementById('reportOtpInput').disabled = false;
+    document.getElementById('reportOtpFields').classList.remove('hidden');
+    sendButton.textContent = 'Resend OTP';
+    status.textContent = 'Development OTP generated. Check the server logs. It expires in five minutes.';
+  } catch (error) {
+    status.textContent = error.message;
+    console.error('Error sending report OTP:', error);
+  } finally {
+    sendButton.disabled = false;
+  }
+}
+
+async function verifyReportOtp() {
+  const otpInput = document.getElementById('reportOtpInput');
+  const verifyButton = document.getElementById('verifyReportOtpButton');
+  const status = document.getElementById('reportVerificationStatus');
+  const otp = otpInput.value.trim();
+  if (!reportVerificationChallengeId) {
+    status.textContent = 'Send an OTP first.';
+    return;
+  }
+  if (!/^\d{6}$/.test(otp)) {
+    status.textContent = 'Enter the six-digit OTP sent to your phone.';
+    otpInput.focus();
+    return;
+  }
+
+  verifyButton.disabled = true;
+  status.textContent = 'Verifying OTP...';
+  try {
+    const response = await fetch('/api/report-otp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId: reportVerificationChallengeId, otp })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      if (response.status === 410) resetReportOtpVerification(data.error);
+      throw new Error(data.error || 'Unable to verify the OTP.');
+    }
+
+    reportVerificationVerified = true;
+    otpInput.disabled = true;
+    document.getElementById('submitReportButton').disabled = false;
+    document.getElementById('sendReportOtpButton').disabled = true;
+    status.textContent = 'Phone verified. Your number will not be attached to the report.';
+  } catch (error) {
+    status.textContent = error.message;
+    console.error('Error verifying report OTP:', error);
+  } finally {
+    verifyButton.disabled = false;
+  }
+}
+
+function showReportLocationWarning(payload, outsideGpsRadius, outsideDirectory) {
+  const warning = document.getElementById('reportStationWarning');
+  const message = document.getElementById('reportStationWarningMessage');
+  const suggestionStatus = document.getElementById('reportStationSuggestionStatus');
+  const suggestions = document.getElementById('reportStationSuggestions');
+  const useCurrentLocationButton = document.getElementById('useCurrentLocationForReport');
+  const reportLocation = { latitude: Number(payload.latitude), longitude: Number(payload.longitude) };
+  const messages = [];
+
+  if (!currentUserLocation) {
+    messages.push('Your current GPS location could not be verified, so SAFIRA cannot check whether this report point is within 5 km of you.');
+  } else if (outsideGpsRadius) {
+    const distance = getDistanceMeters(currentUserLocation, reportLocation);
+    messages.push(`This report point is ${formatStationDistance(distance)} from your current GPS location, outside the 5 km range.`);
+  }
+
+  if (!policeDirectory) {
+    messages.push('The local station directory could not be loaded, so nearby stations cannot be checked.');
+  } else if (outsideDirectory) {
+    messages.push('This point is outside the coverage of the locally stored Bengaluru station directory.');
+  }
+
+  message.textContent = `${messages.join(' ')} Review the mapped stations near the report point before continuing. Proximity is not an official jurisdiction check.`;
+  suggestions.replaceChildren();
+  useCurrentLocationButton.classList.toggle('hidden', !currentUserLocation);
+
+  if (outsideDirectory || !policeDirectory) {
+    suggestionStatus.textContent = 'No local station suggestions are available for this report area.';
+  } else {
+    const nearestStations = getStationsByDistance(reportLocation);
+    const withinRadius = nearestStations.filter(station => station.distanceMeters <= POLICE_RADIUS_METERS);
+    const suggestionsToShow = withinRadius.length > 0 ? withinRadius : nearestStations.slice(0, 3);
+
+    if (withinRadius.length === 0) {
+      suggestionStatus.textContent = 'No mapped stations are within 5 km of this report point; showing the closest mapped stations instead.';
+    } else {
+      suggestionStatus.textContent = 'Mapped stations within 5 km of the report point by straight-line distance, nearest first:';
+    }
+    suggestionsToShow.forEach(station => suggestions.appendChild(makeStationListItem(station)));
+  }
+
+  warning.classList.remove('hidden');
+  warning.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function hideReportLocationWarning() {
+  document.getElementById('reportStationWarning').classList.add('hidden');
+}
+
+async function submitReport(payload) {
+  const status = document.getElementById('reportSubmitStatus');
+  const verificationStatus = document.getElementById('reportVerificationStatus');
+  if (!reportVerificationChallengeId || !reportVerificationVerified ||
+      document.getElementById('reportPhoneInput').value.trim() !== reportVerificationPhone) {
+    verificationStatus.textContent = 'Send an OTP and verify your phone before submitting the report.';
+    document.getElementById('reportPhoneInput').focus();
+    return;
+  }
+
+  status.textContent = 'Submitting report...';
+
+  try {
+    const response = await fetch('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        verificationChallengeId: reportVerificationChallengeId
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      if (response.status === 410) resetReportOtpVerification(data.error);
+      throw new Error(data.error || 'Unable to submit the report.');
+    }
+
+    displayAIOutput(data.aiOutput);
+    await loadSafetyData();
+    document.getElementById('reportForm').reset();
+    resetReportOtpVerification();
+    hideReportLocationWarning();
+    status.textContent = data.message || 'Report submitted.';
+  } catch (error) {
+    status.textContent = `Report submission failed: ${error.message}`;
+    console.error('Error filing report:', error);
+  }
 }
 
 function displayAIOutput(aiOutput) {
@@ -255,7 +696,7 @@ const modalContentMap = {
       { label: 'Women Helpline (1091)', tel: '1091' },
       { label: 'National Emergency (112)', tel: '112' }
     ],
-    actionText: 'Report Harassment Anonymously',
+    actionText: 'Report Harassment',
     actionType: 'Women',
     actionDesc: 'Harassment or stalking concern'
   },
@@ -309,91 +750,6 @@ const modalContentMap = {
     actionDesc: 'Guardian reporting concern near school/campus'
   }
 };
-
-/* --- PRE-FILL EXECUTION HANDLER --- */
-function prefillAndScroll(type, desc) {
-  // 1. Close and hide modal
-  const modal = document.getElementById('infoModal');
-  if (modal) {
-    modal.classList.add('hidden');
-    modal.style.display = 'none';
-  }
-
-  // 2. Pre-fill reporter category dropdown
-  const reporterSelect = document.getElementById('reporterType');
-  if (reporterSelect) {
-    reporterSelect.value = type;
-  }
-
-  // 3. Pre-fill incident description
-  const descTextarea = document.getElementById('description');
-  if (descTextarea) {
-    descTextarea.value = desc;
-  }
-
-  // 4. Pre-fill current time if empty
-  const reportTimeInput = document.getElementById('reportTime');
-  if (reportTimeInput && !reportTimeInput.value) {
-    const now = new Date();
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    reportTimeInput.value = now.toISOString().slice(0, 16);
-  }
-
-  // 5. Scroll directly to the report form section
-  const reportSection = document.getElementById('report') || document.getElementById('reportForm');
-  if (reportSection) {
-    const yOffset = -70; // Clearance for fixed navbar
-    const y = reportSection.getBoundingClientRect().top + window.pageYOffset + yOffset;
-    window.scrollTo({ top: y, behavior: 'smooth' });
-  }
-
-  // 6. Focus textarea and position cursor
-  setTimeout(() => {
-    if (descTextarea) {
-      descTextarea.focus();
-      descTextarea.setSelectionRange(descTextarea.value.length, descTextarea.value.length);
-    }
-  }, 400);
-}
-function openModal(key) {
-  const data = modalContentMap[key];
-  if (!data) return;
-
-  const modal = document.getElementById('infoModal');
-  const title = document.getElementById('modalTitle');
-  const body = document.getElementById('modalBody');
-
-  title.textContent = data.title;
-
-  let itemsHtml = '<ul class="modal-feature-list">';
-  data.items.forEach(item => {
-    itemsHtml += `<li><strong>${item.heading}</strong>${item.text}</li>`;
-  });
-  itemsHtml += '</ul>';
-
-  if (data.emergencyLinks) {
-    itemsHtml += '<div class="modal-emergency-grid">';
-    data.emergencyLinks.forEach(link => {
-      itemsHtml += `<a href="tel:${link.tel}" class="emergency-dial-btn">📞 ${link.label}</a>`;
-    });
-    itemsHtml += '</div><br>';
-  }
-
-  itemsHtml += `<button class="modal-action-btn" onclick="prefillAndScroll('${data.actionType}', '${data.actionDesc}')">${data.actionText}</button>`;
-
-  body.innerHTML = itemsHtml;
-  modal.classList.remove('hidden');
-}
-
-function closeModal() {
-  document.getElementById('infoModal').classList.add('hidden');
-}
-
-function closeModalOnBackdrop(e) {
-  if (e.target.id === 'infoModal') {
-    closeModal();
-  }
-}
 
 /* =========================================================
    MODAL DATA & PRE-FILL HANDLER
@@ -451,7 +807,7 @@ const modalContentMap1 = {
       { label: 'Women Helpline (1091)', tel: '1091' },
       { label: 'National Emergency (112)', tel: '112' }
     ],
-    actionText: 'Report Harassment Anonymously',
+    actionText: 'Report Harassment',
     actionType: 'Women',
     actionDesc: '[Harassment / Threat]: Following or stalking behavior / verbal harassment in public area.'
   },
@@ -529,15 +885,24 @@ function openModal(key) {
   }
 
   // Pre-fill action button
-  itemsHtml += `<button type="button" class="modal-action-btn" onclick="prefillAndScroll('${data.actionType}', '${data.actionDesc.replace(/'/g, "\\'")}')">${data.actionText}</button>`;
+  itemsHtml += `<a href="#report" class="modal-action-btn" id="modalPrefillButton">${data.actionText}</a>`;
 
   body.innerHTML = itemsHtml;
   modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+
+  const prefillButton = document.getElementById('modalPrefillButton');
+  prefillButton.addEventListener('click', () => {
+    prefillAndScroll(data.actionType, data.actionDesc);
+  });
 }
 
 function closeModal() {
   const modal = document.getElementById('infoModal');
-  if (modal) modal.classList.add('hidden');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = '';
+  }
 }
 
 function closeModalOnBackdrop(e) {
@@ -548,17 +913,15 @@ function closeModalOnBackdrop(e) {
 
 // Master prefill function with explicit scrolling and visual confirmation
 function prefillAndScroll(type, desc) {
-  // 1. Close the modal
   closeModal();
+  showPage('report', true);
 
-  // 2. Select form fields
   const reporterSelect = document.getElementById('reporterType');
   const descTextarea = document.getElementById('description');
   const reportTimeInput = document.getElementById('reportTime');
   const formElement = document.getElementById('reportForm');
   const reportSection = document.getElementById('report');
 
-  // 3. Fill values
   if (reporterSelect) {
     reporterSelect.value = type;
   }
@@ -574,19 +937,16 @@ function prefillAndScroll(type, desc) {
     reportTimeInput.value = now.toISOString().slice(0, 16);
   }
 
-  // 4. Scroll smoothly right to the form
   if (reportSection) {
-    reportSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    reportSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // 5. Apply highlight animation to give the user visual feedback
   if (formElement) {
     formElement.classList.remove('form-highlight-pulse');
-    void formElement.offsetWidth; // Force CSS reflow
+    void formElement.offsetWidth;
     formElement.classList.add('form-highlight-pulse');
   }
 
-  // 6. Focus the description textarea so the user can continue typing
   setTimeout(() => {
     if (descTextarea) {
       descTextarea.focus();
@@ -596,36 +956,8 @@ function prefillAndScroll(type, desc) {
   }, 450);
 }
 /* =========================================================
-   CLICK-ONLY NAV LINK ACTIVE STATE
-   ========================================================= */
-document.addEventListener('DOMContentLoaded', () => {
-  const navLinks = document.querySelectorAll('.nav-links a');
-
-  navLinks.forEach(link => {
-    link.addEventListener('click', function (e) {
-      // Remove 'active' class from all links
-      navLinks.forEach(l => l.classList.remove('active'));
-
-      // Add 'active' class only to the clicked link
-      this.classList.add('active');
-    });
-  });
-});
-
-/* =========================================================
    MAP CLICK-TO-PIN & GEOLOCATION HANDLERS
    ========================================================= */
-let userPinMarker = null;
-
-// Enable direct click-to-pin on the Leaflet map
-if (typeof map !== 'undefined') {
-  map.on('click', function(e) {
-    const lat = e.latlng.lat;
-    const lng = e.latlng.lng;
-    updateSelectedLocation(lat, lng, `Pinned: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-  });
-}
-
 // "Pin from Map" button: scrolls smoothly down to the Leaflet map
 document.getElementById('pinOnMapBtn')?.addEventListener('click', () => {
   const mapElement = document.getElementById('map');
@@ -638,55 +970,109 @@ document.getElementById('pinOnMapBtn')?.addEventListener('click', () => {
   }
 });
 
-// "Use My GPS" button: grabs device coordinates
-document.getElementById('locateMeBtn')?.addEventListener('click', () => {
-  const status = document.getElementById('pinnedCoordsStatus');
-  if (!navigator.geolocation) {
-    alert('Geolocation is not supported by your browser.');
+function requestCurrentLocation() {
+  const setStatus = (message) => {
+    ['locationStatus', 'mapLocationStatus'].forEach(id => {
+      const status = document.getElementById(id);
+      if (status) status.textContent = message;
+    });
+  };
+
+  if (window.isSecureContext === false) {
+    setStatus('Location access requires HTTPS or localhost.');
     return;
   }
-  if (status) status.textContent = 'Detecting current GPS location...';
-  
+
+  if (!navigator.geolocation) {
+    setStatus('Location is not supported by this browser. Enter coordinates manually.');
+    return;
+  }
+
+  setStatus('Getting your current location...');
   navigator.geolocation.getCurrentPosition(
     (position) => {
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
+      updateCurrentUserLocation(lat, lng);
       updateSelectedLocation(lat, lng, 'Current GPS Location Detected');
       if (typeof map !== 'undefined') {
-        map.setView([lat, lng], 15);
+        map.setView([lat, lng], 11);
+      }
+      setStatus(`Location added: ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+    },
+    (error) => {
+      if (error.code === 1) {
+        setStatus('Location permission denied. Allow location access or enter coordinates manually.');
+      } else if (error.code === 3) {
+        setStatus('Location request timed out. Try again or enter coordinates manually.');
+      } else {
+        setStatus('Current location is unavailable. Check location services or enter coordinates manually.');
       }
     },
-    () => {
-      if (status) status.textContent = 'Unable to fetch GPS. Click on the map to pin manually.';
-    }
+    { enableHighAccuracy: true, maximumAge: 60000, timeout: 10000 }
   );
-});
+}
 
-// Helper to store lat/lng in hidden inputs and place a draggable marker
+// "Use My GPS" button: grabs device coordinates
+document.getElementById('locateMeBtn')?.addEventListener('click', requestCurrentLocation);
+document.getElementById('locateMapBtn')?.addEventListener('click', requestCurrentLocation);
+
+function updateCurrentUserLocation(lat, lng) {
+  currentUserLocation = { latitude: lat, longitude: lng };
+
+  if (typeof map !== 'undefined' && typeof L !== 'undefined') {
+    if (policeRadiusCircle) {
+      policeRadiusCircle.setLatLng([lat, lng]);
+    } else {
+      policeRadiusCircle = L.circle([lat, lng], {
+        radius: POLICE_RADIUS_METERS,
+        color: '#567C8D',
+        fillColor: '#C8D9E6',
+        fillOpacity: 0.12,
+        weight: 2
+      }).addTo(map);
+      policeRadiusCircle.bindPopup('<strong>5 km from your current GPS location</strong>');
+    }
+
+    if (currentLocationMarker) {
+      currentLocationMarker.setLatLng([lat, lng]);
+    } else {
+      currentLocationMarker = L.marker([lat, lng]).addTo(map);
+      currentLocationMarker.bindPopup('Your current GPS location');
+    }
+
+    renderNearbyStations();
+  }
+}
+
+// Store report coordinates separately from the user's current GPS location.
 function updateSelectedLocation(lat, lng, label) {
   const latInput = document.getElementById('latitude');
   const lngInput = document.getElementById('longitude');
   const locInput = document.getElementById('locationInput');
-  const status = document.getElementById('pinnedCoordsStatus');
+  const statusMessage = `Report location selected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
 
   if (latInput) latInput.value = lat;
   if (lngInput) lngInput.value = lng;
+  const warning = document.getElementById('reportStationWarning');
+  if (warning && !warning.classList.contains('hidden')) hideReportLocationWarning();
   if (locInput && (!locInput.value || locInput.value.startsWith('Pinned'))) {
     locInput.value = label;
   }
-  if (status) {
-    status.textContent = `📍 Selected: ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
-  }
+  ['locationStatus', 'pinnedCoordsStatus'].forEach(id => {
+    const status = document.getElementById(id);
+    if (status) status.textContent = statusMessage;
+  });
 
-  // Update marker on Leaflet map
   if (typeof map !== 'undefined' && typeof L !== 'undefined') {
-    if (userPinMarker) {
-      userPinMarker.setLatLng([lat, lng]);
+    if (reportLocationMarker) {
+      reportLocationMarker.setLatLng([lat, lng]);
     } else {
-      userPinMarker = L.marker([lat, lng], { draggable: true }).addTo(map);
-      userPinMarker.on('dragend', function(event) {
-        const pos = event.target.getLatLng();
-        updateSelectedLocation(pos.lat, pos.lng, `Pinned: ${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}`);
+      reportLocationMarker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      reportLocationMarker.bindPopup('Selected report location');
+      reportLocationMarker.on('dragend', function(event) {
+        const position = event.target.getLatLng();
+        updateSelectedLocation(position.lat, position.lng, `Pinned: ${position.lat.toFixed(4)}, ${position.lng.toFixed(4)}`);
       });
     }
   }
@@ -722,84 +1108,13 @@ function openChildFollowedModal() {
 
 // 2. "SHARE MY LOCATION" (Private, Time-Limited, Never on Public Dashboard)
 function openShareLocationModal() {
-  const modal = document.getElementById('childActionModal');
-  const content = document.getElementById('childModalContent');
-  if (!modal || !content) return;
-
-  content.innerHTML = `
-    <h2>📍 Share Live Location Privately</h2>
-    <p>Choose who to share with and how long it should stay active.</p>
-
-    <div class="select-group">
-      <label for="trustedContact">Share with:</label>
-      <select id="trustedContact">
-        <option value="Parent">Parent</option>
-        <option value="Guardian">Guardian</option>
-        <option value="Trusted Adult">Trusted Adult</option>
-        <option value="Emergency Contact">Emergency Contact</option>
-      </select>
-    </div>
-
-    <div class="select-group">
-      <label for="shareDuration">Active Duration:</label>
-      <select id="shareDuration">
-        <option value="15">15 Minutes</option>
-        <option value="30" selected>30 Minutes</option>
-        <option value="60">1 Hour</option>
-      </select>
-    </div>
-
-    <button type="button" class="child-btn child-btn-blue" onclick="generatePrivateLocationLink()">
-      📲 Send Secure Location Link
-    </button>
-
-    <div id="shareStatusMessage" style="margin-top: 0.75rem;"></div>
-
-    <div class="privacy-notice">
-      🔒 <strong>Privacy Guard:</strong> This location is encrypted and shared privately only with the selected contact. It is <u>never</u> displayed on the public safety map.
-    </div>
-  `;
-
-  modal.classList.remove('hidden');
-  modal.style.display = 'flex';
+  closeChildActionModal();
+  openChildModal('share-location');
 }
 
-// Generates time-limited GPS coordinates link
+// Retain the legacy handler name while routing through the live-share flow.
 function generatePrivateLocationLink() {
-  const status = document.getElementById('shareStatusMessage');
-  const recipient = document.getElementById('trustedContact')?.value || 'Contact';
-  const minutes = document.getElementById('shareDuration')?.value || '30';
-
-  if (!navigator.geolocation) {
-    status.innerHTML = `<span style="color:#d9363e;">Geolocation not supported on this browser.</span>`;
-    return;
-  }
-
-  status.innerHTML = `<span>Fetching current coordinates...</span>`;
-
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const lat = pos.coords.latitude.toFixed(5);
-      const lng = pos.coords.longitude.toFixed(5);
-      const expiry = new Date(Date.now() + minutes * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
-
-      // Open native SMS/WhatsApp prefill or display direct copied link
-      const textMessage = encodeURIComponent(`SAFIRA ALERT: I am sharing my live location with you (${recipient}). Valid until ${expiry}: ${mapsUrl}`);
-      
-      status.innerHTML = `
-        <div style="background:#e8f4fd; padding:0.6rem; border-radius:6px; font-size:0.85rem; border:1px solid #b8daff;">
-          ✅ Location secured until <strong>${expiry}</strong>.<br>
-          <a href="sms:?body=${textMessage}" class="child-btn child-btn-teal" style="margin-top:0.5rem; padding:0.5rem;">
-            ✉️ Open Messaging App to Send
-          </a>
-        </div>
-      `;
-    },
-    () => {
-      status.innerHTML = `<span style="color:#d9363e;">⚠️ Unable to access GPS. Please ensure location permissions are enabled.</span>`;
-    }
-  );
+  generateChildShareLink();
 }
 
 // 3. "BULLYING / HARASSMENT" MODAL
@@ -834,17 +1149,10 @@ function openBullyingModal() {
 // Prefills Bullying details into the form and switches to Report Concern
 function prefillBullyingReport() {
   closeChildActionModal();
-  
-  if (typeof fillReportForm === 'function') {
-    fillReportForm(
-      'Child',
-      'School Safety / Harassment Concern: Reporting repetitive bullying, physical/verbal intimidation, or cyber harassment.',
-      'School Grounds / Perimeter Area'
-    );
-  } else {
-    const reportTab = document.querySelector('a[href="#report"]');
-    if (reportTab) reportTab.click();
-  }
+  prefillAndScroll(
+    'Child',
+    'School Safety / Harassment Concern: Reporting repetitive bullying, physical/verbal intimidation, or cyber harassment.'
+  );
 }
 
 // Modal closing helpers
@@ -881,13 +1189,13 @@ const childrenContentData = {
       { label: 'Police Assistance (100)', tel: '100' }
     ],
     actionText: '📍 Share My Live Location Now',
-    actionFn: 'openChildModal("share-location")'
+    action: () => openChildModal('share-location')
   },
 
   // 2. SHARE MY LOCATION
   'share-location': {
     title: '📍 Share Live Location Privately',
-    advice: '🔒 <strong>Privacy Shield Active:</strong> This location is temporary, encrypted, and never published on public safety dashboards.',
+    advice: '🔒 <strong>Private temporary link:</strong> Your location is kept in server memory until the selected sharing window ends. It is not shown on the public safety dashboard.',
     customHtml: `
       <div class="select-group">
         <label for="childTrustedContact">Send to:</label>
@@ -900,6 +1208,11 @@ const childrenContentData = {
       </div>
 
       <div class="select-group">
+        <label for="childTrustedPhone">Recipient phone number:</label>
+        <input id="childTrustedPhone" type="tel" autocomplete="tel" pattern="[+]?[0-9 ()-]{7,20}" placeholder="+91 98765 43210" required>
+      </div>
+
+      <div class="select-group">
         <label for="childShareTime">Active Window:</label>
         <select id="childShareTime">
           <option value="15">15 Minutes</option>
@@ -909,7 +1222,7 @@ const childrenContentData = {
       </div>
 
       <button type="button" class="child-btn child-btn-teal" onclick="generateChildShareLink()">
-        📲 Create Secure SMS Link
+        📲 Start Live Sharing
       </button>
 
       <div id="childShareResult" style="margin-top: 0.75rem;"></div>
@@ -930,7 +1243,7 @@ const childrenContentData = {
       { label: 'Student Support (112)', tel: '112' }
     ],
     actionText: '📝 Pre-fill Bullying Incident Report',
-    actionFn: 'handleBullyingPrefill()'
+    action: handleBullyingPrefill
   }
 };
 
@@ -972,13 +1285,19 @@ function openChildModal(key) {
     html += '</div>';
   }
 
-  if (data.actionText && data.actionFn) {
-    html += `<button type="button" class="child-btn child-btn-blue" style="margin-top: 1rem;" onclick="${data.actionFn}">${data.actionText}</button>`;
+  if (data.actionText && data.action) {
+    html += `<button id="childModalActionButton" type="button" class="child-btn child-btn-blue" style="margin-top: 1rem;">${data.actionText}</button>`;
   }
 
   body.innerHTML = html;
+  const actionButton = document.getElementById('childModalActionButton');
+  if (actionButton) actionButton.addEventListener('click', data.action);
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+
+  if (key === 'share-location' && activeLocationShareToken) {
+    showActiveLocationShareControls();
+  }
 }
 
 function closeChildModal() {
@@ -995,50 +1314,248 @@ function closeChildModalOnBackdrop(e) {
   }
 }
 
-// Generate Private Location Link Handler
+function setLiveShareStatus(message) {
+  if (activeLocationShareStatus) activeLocationShareStatus.textContent = message;
+}
+
+function showActiveLocationShareControls() {
+  const resultDiv = document.getElementById('childShareResult');
+  if (!resultDiv) return;
+
+  activeLocationShareStatus = document.createElement('p');
+  activeLocationShareStatus.setAttribute('role', 'status');
+  activeLocationShareStatus.setAttribute('aria-live', 'polite');
+  resultDiv.replaceChildren(activeLocationShareStatus);
+  setLiveShareStatus(`Live sharing is active until ${new Date(activeLocationShareExpiresAt).toLocaleTimeString()}.`);
+
+  const stopButton = document.createElement('button');
+  stopButton.type = 'button';
+  stopButton.className = 'child-btn child-btn-red';
+  stopButton.textContent = 'Stop Sharing';
+  stopButton.addEventListener('click', () => stopLiveLocationShare());
+  resultDiv.appendChild(stopButton);
+}
+
 function generateChildShareLink() {
   const resultDiv = document.getElementById('childShareResult');
-  const contact = document.getElementById('childTrustedContact')?.value || 'Guardian';
-  const mins = document.getElementById('childShareTime')?.value || '30';
+  const phoneInput = document.getElementById('childTrustedPhone');
+  if (!resultDiv || !phoneInput) return;
 
+  const contact = document.getElementById('childTrustedContact').value;
+  const durationMinutes = Number(document.getElementById('childShareTime').value);
+  const phone = phoneInput.value.replace(/[ ()-]/g, '');
+  if (!/^\+?\d{7,15}$/.test(phone)) {
+    resultDiv.textContent = 'Enter a valid phone number, including the country code.';
+    return;
+  }
+  if (![15, 30, 60].includes(durationMinutes)) {
+    resultDiv.textContent = 'Choose a valid sharing duration.';
+    return;
+  }
+  if (activeLocationShareToken) {
+    resultDiv.textContent = 'Stop the current share before starting another one.';
+    return;
+  }
+  if (window.isSecureContext === false) {
+    resultDiv.textContent = 'Live location sharing requires HTTPS or localhost.';
+    return;
+  }
   if (!navigator.geolocation) {
-    resultDiv.innerHTML = '<span style="color:#d9363e;">Geolocation is not supported by your browser.</span>';
+    resultDiv.textContent = 'Geolocation is not supported by this browser.';
     return;
   }
 
-  resultDiv.innerHTML = '<span>Detecting current coordinates...</span>';
-
+  resultDiv.textContent = 'Getting your location...';
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const lat = pos.coords.latitude.toFixed(5);
-      const lng = pos.coords.longitude.toFixed(5);
-      const expiry = new Date(Date.now() + mins * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const mapUrl = `https://maps.google.com/?q=${lat},${lng}`;
-      const msg = encodeURIComponent(`SAFIRA ALERT: I am sharing my live location with you (${contact}). Active until ${expiry}: ${mapUrl}`);
+    async (position) => {
+      resultDiv.textContent = 'Starting your private live share...';
+      try {
+        const response = await fetch('/api/location-shares', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            durationMinutes
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to start live location sharing.');
 
-      resultDiv.innerHTML = `
-        <div style="background:#e8f4fd; padding:0.6rem; border-radius:6px; font-size:0.85rem; border:1px solid #b8daff; margin-top:0.5rem;">
-          ✅ Location valid until <strong>${expiry}</strong>.<br>
-          <a href="sms:?body=${msg}" class="child-btn child-btn-teal" style="margin-top:0.5rem; text-decoration:none;">
-            ✉️ Tap to Send via SMS / WhatsApp
-          </a>
-        </div>
-      `;
+        activeLocationShareToken = data.token;
+        activeLocationShareExpiresAt = data.expiresAt;
+        activeLocationShareStatus = document.createElement('p');
+        activeLocationShareStatus.setAttribute('role', 'status');
+        activeLocationShareStatus.setAttribute('aria-live', 'polite');
+        resultDiv.replaceChildren(activeLocationShareStatus);
+
+        const localhost = isLoopbackHostname(window.location.hostname);
+        const privateNetworkAddress = isPrivateIpv4Address(window.location.hostname);
+        let shareOrigin = window.location.origin;
+        let lanLinkAvailable = false;
+
+        if (localhost) {
+          try {
+            const accessResponse = await fetch('/api/location-share-access', { cache: 'no-store' });
+            const accessData = await accessResponse.json();
+            if (!accessResponse.ok) throw new Error(accessData.error || 'Unable to find a local network address.');
+            if (accessData.localNetworkOrigin) {
+              shareOrigin = accessData.localNetworkOrigin;
+              lanLinkAvailable = true;
+            }
+          } catch (error) {
+            console.error('Unable to determine local network link:', error);
+          }
+        }
+
+        const shareUrl = new URL(
+          `/share-location.html?token=${encodeURIComponent(data.token)}`,
+          shareOrigin
+        ).href;
+        const expiresAt = new Date(data.expiresAt);
+        const message = `SAFIRA live location for ${contact}, available until ${expiresAt.toLocaleTimeString()}: ${shareUrl}`;
+        const smsLink = document.createElement('a');
+        smsLink.href = `sms:${phone}?body=${encodeURIComponent(message)}`;
+        smsLink.className = 'child-btn child-btn-teal';
+        smsLink.textContent = 'Open SMS to Send Live Link';
+
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'child-btn child-btn-blue';
+        copyButton.textContent = 'Copy Share Link';
+        copyButton.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(shareUrl);
+            setLiveShareStatus('Live share link copied. Send it only to someone you trust.');
+          } catch (error) {
+            setLiveShareStatus(`Unable to copy the share link: ${error.message}`);
+          }
+        });
+
+        const stopButton = document.createElement('button');
+        stopButton.type = 'button';
+        stopButton.className = 'child-btn child-btn-red';
+        stopButton.textContent = 'Stop Sharing';
+        stopButton.addEventListener('click', () => stopLiveLocationShare());
+        resultDiv.append(smsLink, copyButton, stopButton);
+
+        setLiveShareStatus(
+          localhost
+            ? lanLinkAvailable
+              ? `Live sharing is active until ${expiresAt.toLocaleTimeString()}. The link uses this device's local network address; your contact must be on the same Wi-Fi/network. For remote contacts, deploy SAFIRA over public HTTPS.`
+              : `Live sharing is active until ${expiresAt.toLocaleTimeString()}, but this link uses localhost and only works on this device. The local network address could not be detected; use the app's network address or deploy public HTTPS for your contact.`
+            : privateNetworkAddress
+              ? `Live sharing is active until ${expiresAt.toLocaleTimeString()}. This private network link works only for devices on the same Wi-Fi/network. Use public HTTPS for remote contacts.`
+              : `Live sharing is active until ${expiresAt.toLocaleTimeString()}. Send the link by SMS; your contact must open it to view your location.`
+        );
+
+        lastLocationShareUpdateAt = Date.now();
+        activeLocationShareWatchId = navigator.geolocation.watchPosition(
+          (updatedPosition) => {
+            if (Date.now() - lastLocationShareUpdateAt < 10000) return;
+            lastLocationShareUpdateAt = Date.now();
+            updateLiveLocationOnServer(
+              data.token,
+              updatedPosition.coords.latitude,
+              updatedPosition.coords.longitude
+            );
+          },
+          (error) => {
+            setLiveShareStatus(
+              `New GPS updates are unavailable: ${getLocationErrorMessage(error)} The share remains active with the last known location until you stop it or it expires.`
+            );
+          },
+          { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
+        );
+        activeLocationShareTimer = window.setTimeout(
+          () => stopLiveLocationShare('The selected sharing period has ended.'),
+          Math.max(0, data.expiresAt - Date.now())
+        );
+      } catch (error) {
+        resultDiv.textContent = `Unable to start live sharing: ${error.message}`;
+      }
     },
-    () => {
-      resultDiv.innerHTML = '<span style="color:#d9363e;">⚠️ GPS access denied. Please enable location permissions.</span>';
-    }
+    (error) => {
+      resultDiv.textContent = getLocationErrorMessage(error);
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
   );
+}
+
+function isLoopbackHostname(hostname) {
+  const normalized = String(hostname || '').toLowerCase();
+  return normalized === 'localhost' || normalized === '::1' || /^127\./.test(normalized);
+}
+
+function isPrivateIpv4Address(hostname) {
+  return /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
+}
+
+function getLocationErrorMessage(error) {
+  if (error.code === 1) return 'Location permission denied. Allow location access in your browser.';
+  if (error.code === 3) return 'Location request timed out. Check GPS and try again.';
+  return 'Current location is unavailable. Check your device location services.';
+}
+
+async function updateLiveLocationOnServer(token, latitude, longitude) {
+  if (activeLocationShareToken !== token) return;
+
+  try {
+    const response = await fetch(`/api/location-shares/${encodeURIComponent(token)}/location`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ latitude, longitude })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Unable to update live location.');
+    if (activeLocationShareToken !== token) return;
+    setLiveShareStatus(`Live location updated at ${new Date(data.updatedAt).toLocaleTimeString()}.`);
+  } catch (error) {
+    if (activeLocationShareToken === token) {
+      setLiveShareStatus(`Location update failed: ${error.message}`);
+    }
+  }
+}
+
+async function stopLiveLocationShare(message) {
+  const token = activeLocationShareToken;
+  const resultDiv = document.getElementById('childShareResult');
+  if (resultDiv && activeLocationShareStatus) {
+    resultDiv.replaceChildren(activeLocationShareStatus);
+  }
+
+  if (activeLocationShareWatchId !== null) {
+    navigator.geolocation.clearWatch(activeLocationShareWatchId);
+  }
+  if (activeLocationShareTimer !== null) {
+    window.clearTimeout(activeLocationShareTimer);
+  }
+  activeLocationShareToken = null;
+  activeLocationShareExpiresAt = null;
+  activeLocationShareWatchId = null;
+  activeLocationShareTimer = null;
+
+  if (!token) {
+    setLiveShareStatus(message || 'No active location share.');
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/location-shares/${encodeURIComponent(token)}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('The server could not stop the share.');
+    setLiveShareStatus(message || 'Location sharing stopped.');
+  } catch (error) {
+    setLiveShareStatus(`Sharing stopped on this device, but server cleanup failed: ${error.message}`);
+  }
 }
 
 // Bullying Pre-fill Handler
 function handleBullyingPrefill() {
   closeChildModal();
-  if (typeof fillReportForm === 'function') {
-    fillReportForm(
-      'Child',
-      'School Safety Concern: Reporting persistent verbal harassment / physical bullying / cyberbullying.',
-      'School Campus / Perimeter Area'
-    );
-  }
+  prefillAndScroll(
+    'Child',
+    'School Safety Concern: Reporting persistent verbal harassment / physical bullying / cyberbullying.'
+  );
 }

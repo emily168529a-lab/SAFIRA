@@ -34,27 +34,6 @@
 </header>
 
 <main>
-  <!-- Hero Section: Text on Left, Image Card on Right -->
-  <section id="home" class="hero-section">
-    <div class="container hero-grid">
-      <div class="hero-content">
-        <span class="eyebrow">PUBLIC & PERSONAL SAFETY INTELLIGENCE</span>
-        <h1 class="hero-title">SAFIRA PLATFORM</h1>
-        <p class="subtitle">AI-Driven Real-Time Protection & Community Intelligence</p>
-        <div class="hero-cta-group">
-          <a href="#report" class="btn btn-primary">Report a Concern</a>
-          <a href="#dashboard" class="btn btn-outline">Explore Live Map</a>
-        </div>
-      </div>
-      <div class="hero-media">
-        <div class="image-frame">
-          <img src="images/logo.png" alt="Safira Classical Emblem" class="hero-img" />
-        </div>
-      </div>
-    </div>
-  </section>
-  
-  <main>
     <!-- Wireframe Section 1: H1 Catchy Headline + Brand Script + Hero Image -->
     <section id="home" class="hero-section">
       <div class="container hero-grid">
@@ -79,11 +58,11 @@
         <div class="card-grid">
           <div class="card">
             <h3>Our Mission</h3>
-            <p>Empower communities with anonymous, fast, and actionable safety insight using AI pattern recognition.</p>
+            <p>Empower communities with fast, privacy-conscious safety reports and actionable insight using AI pattern recognition.</p>
           </div>
           <div class="card highlighted">
             <h3>Features</h3>
-            <p>100% Anonymous reporting, real-time hotspot detection, color-coded risk maps, and dedicated safety zones.</p>
+            <p>Phone OTP checks to reduce report misuse, real-time hotspot detection, color-coded risk maps, and dedicated safety zones.</p>
           </div>
           <div class="card">
             <h3>Impact</h3>
@@ -96,13 +75,12 @@
     <!-- Wireframe Section 2: H2 Catchy Headline + Centered Context Banner -->
     <section class="banner-section">
       <div class="container banner-content">
-        <span class="banner-pill">Guaranteed Anonymity</span>
-        <h2 class="banner-headline">Your Voice Matters. Your Identity Stays Protected.</h2>
+        <span class="banner-pill">Phone OTP Verification</span>
+        <h2 class="banner-headline">Your Voice Matters. Your Number Is Not Stored with Your Report.</h2>
         <p class="banner-subtext">
-          Every report feeds directly into our real-time spatial neural model, creating immediate 
-          predictive safety warnings for pedestrians, students, and night commuters.
+          Reports feed into our real-time safety analysis. The verification number is kept separate from report data.
         </p>
-        <a href="#report" class="btn btn-light">File Anonymous Incident</a>
+        <a href="#report" class="btn btn-light">Report a Concern</a>
       </div>
     </section>
 
@@ -112,7 +90,7 @@
         <div class="section-heading-center">
           <span class="eyebrow">Instant Action</span>
           <h2>Report a Concern</h2>
-          <p class="tagline">100% Anonymous | Instant AI Analysis</p>
+          <p class="tagline">Phone OTP required | Number not attached to report</p>
         </div>
 
         <div class="two-column">
@@ -128,16 +106,48 @@
             <label for="description">What happened? (Describe incident/concern)</label>
             <textarea id="description" rows="4" placeholder="Describe safety issues, e.g., dark alley, suspicious activity..." required></textarea>
 
+            <div class="report-verification">
+              <div class="verification-heading">
+                <div>
+                  <label for="reportPhoneInput">Verify your phone number</label>
+                  <p>A six-digit OTP expires in five minutes. In local development it appears in the server logs; this prototype does not send SMS. SAFIRA holds your number temporarily for verification, but does not save it with your report.</p>
+                </div>
+                <button type="button" id="sendReportOtpButton" class="btn btn-outline">Send OTP</button>
+              </div>
+              <input type="tel" id="reportPhoneInput" autocomplete="tel" inputmode="tel" pattern="\+[1-9][0-9]{7,14}" placeholder="Phone with country code, e.g. +919876543210" required>
+              <div id="reportOtpFields" class="hidden">
+                <label for="reportOtpInput">Enter the OTP</label>
+                <div class="flex-inputs">
+                  <input type="text" id="reportOtpInput" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit OTP">
+                  <button type="button" id="verifyReportOtpButton" class="btn btn-outline">Verify OTP</button>
+                </div>
+              </div>
+              <p id="reportVerificationStatus" class="location-status" role="status" aria-live="polite"></p>
+            </div>
+
             <label>Location Coordinates (Lat, Lng)</label>
             <div class="flex-inputs">
               <input type="number" step="any" id="latitude" placeholder="Latitude (e.g. 12.9716)" required>
               <input type="number" step="any" id="longitude" placeholder="Longitude (e.g. 77.5946)" required>
             </div>
+            <button type="button" id="locateMeBtn" class="btn btn-outline location-button">Use GPS to Fill Coordinates</button>
+            <p id="locationStatus" class="location-status" role="status" aria-live="polite"></p>
+            <div id="reportStationWarning" class="report-location-warning hidden" role="alert" aria-live="assertive">
+              <h3>Check the report location</h3>
+              <p id="reportStationWarningMessage"></p>
+              <p id="reportStationSuggestionStatus" class="station-hint"></p>
+              <ol id="reportStationSuggestions" class="station-list"></ol>
+              <div class="report-warning-actions">
+                <button type="button" id="useCurrentLocationForReport" class="btn btn-outline">Use my current GPS location</button>
+                <button type="button" id="continueReportSubmit" class="btn btn-primary">Continue with this report location</button>
+              </div>
+            </div>
 
             <label for="reportTime">Time</label>
             <input type="datetime-local" id="reportTime">
 
-            <button type="submit" class="btn btn-primary">Submit Report</button>
+            <button type="submit" id="submitReportButton" class="btn btn-primary" disabled>Submit Report</button>
+            <p id="reportSubmitStatus" class="location-status" role="status" aria-live="polite"></p>
           </form>
 
           <!-- AI Output Box -->
@@ -166,11 +176,31 @@
             <span><span class="dot red"></span> High Concern</span>
             <span><span class="dot yellow"></span> Moderate Concern</span>
             <span><span class="dot green"></span> Low Concern</span>
+            <span><span class="dot blue"></span> Police Station</span>
           </div>
+        </div>
+        <div class="map-location-controls">
+          <button type="button" id="locateMapBtn" class="btn btn-light">Show My GPS Location</button>
+          <p id="mapLocationStatus" role="status" aria-live="polite"></p>
         </div>
 
         <!-- Leaflet Map Container -->
         <div id="map"></div>
+
+        <div class="nearby-stations-panel" aria-labelledby="nearbyStationsHeading">
+          <div class="nearby-stations-header">
+            <div>
+              <h3 id="nearbyStationsHeading">Nearby Police Stations</h3>
+              <p id="nearbyStationsStatus" role="status" aria-live="polite">Allow GPS to see mapped stations within 5 km.</p>
+            </div>
+            <span class="station-radius-label">5 km radius</span>
+          </div>
+          <ol id="nearbyStationsList" class="station-list"></ol>
+          <p class="station-data-attribution">
+            Location data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.
+            Community-maintained and may be incomplete or out of date; listed phone numbers need verification. SAFIRA proximity is not an official jurisdiction check.
+          </p>
+        </div>
 
         <!-- Dashboard Stat Grid -->
         <div class="dashboard-grid">
@@ -234,6 +264,8 @@
 </div>
 </section>
 
+  </main>
+
   <!-- MODAL POPUP BACKDROP & CONTAINER -->
   <div id="infoModal" class="modal-overlay hidden" onclick="closeModalOnBackdrop(event)">
     <div class="modal-box">
@@ -255,16 +287,16 @@
 
   <!-- Leaflet JS & Logic -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=18"></script>
 
 
   <div id="childModal" class="modal-overlay hidden" onclick="closeChildModalOnBackdrop(event)">
-  <div class="modal-card">
+  <div class="modal-box">
     <div class="modal-header">
       <h3 id="childModalTitle"></h3>
       <button type="button" class="modal-close-btn" onclick="closeChildModal()">&times;</button>
     </div>
-    <div id="childModalBody"></div>
+    <div id="childModalBody" class="modal-body"></div>
   </div>
 </div>
 </body>
