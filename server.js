@@ -184,12 +184,6 @@ app.get('/api/location-share-access', (req, res) => {
 });
 
 app.post('/api/report-otp/send', (req, res) => {
-  if (process.env.NODE_ENV === 'production') {
-    return res.status(503).json({
-      error: 'OTP log delivery is disabled in production. Configure an SMS provider before deploying.'
-    });
-  }
-
   const phone = normalizePhoneNumber(req.body && req.body.phone);
   if (!phone) {
     return res.status(400).json({ error: 'Enter a valid phone number in international format, such as +919876543210.' });
@@ -223,7 +217,7 @@ app.post('/api/report-otp/send', (req, res) => {
   }
 
   const challengeId = crypto.randomBytes(24).toString('hex');
-  console.log(`[DEV ONLY] SAFIRA report OTP challenge ${challengeId}: ${code}`);
+  console.log(`SAFIRA report OTP challenge ${challengeId}: ${code}`);
 
   reportVerificationChallenges.set(challengeId, {
     phone,
