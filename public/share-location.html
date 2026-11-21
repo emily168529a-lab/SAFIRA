@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>SAFIRA Live Location</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, sans-serif;
+      color: #2f4156;
+      background: #f5efeb;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 1.25rem;
+    }
+
+    main {
+      width: min(100%, 38rem);
+      padding: 2rem;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 12px 32px rgba(47, 65, 86, 0.12);
+    }
+
+    h1 { margin-top: 0; }
+    #status { color: #567c8d; }
+
+    .coordinates {
+      margin: 1.5rem 0;
+      padding: 1rem;
+      border-radius: 10px;
+      background: #f5efeb;
+      font-size: 1.15rem;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    a {
+      display: inline-block;
+      padding: 0.8rem 1rem;
+      border-radius: 8px;
+      background: #2f4156;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    a[hidden] { display: none; }
+    .details { color: #4b6272; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SAFIRA Live Location</h1>
+    <p id="status" role="status" aria-live="polite">Loading shared location...</p>
+    <p id="coordinates" class="coordinates">Waiting for location</p>
+    <p id="updated" class="details"></p>
+    <p id="expires" class="details"></p>
+    <a id="mapLink" href="#" target="_blank" rel="noopener noreferrer" hidden>Open current location in Maps</a>
+  </main>
+  <script>
+    const token = new URLSearchParams(window.location.search).get('token');
+    const statusElement = document.getElementById('status');
+    const coordinatesElement = document.getElementById('coordinates');
+    const updatedElement = document.getElementById('updated');
+    const expiresElement = document.getElementById('expires');
+    const mapLink = document.getElementById('mapLink');
+    let refreshTimer;
+
+    async function refreshLocation() {
+      if (!token) {
+        statusElement.textContent = 'This location link is invalid.';
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/location-shares/${encodeURIComponent(token)}`, {
+          cache: 'no-store'
+        });
+        const data = await response.json();
+        if (response.status === 404) {
+          window.clearInterval(refreshTimer);
+          statusElement.textContent = data.error || 'This location share has ended.';
+          return;
+        }
+        if (!response.ok) throw new Error(data.error || 'Unable to load the shared location.');
+
+        const latitude = Number(data.latitude);
+        const longitude = Number(data.longitude);
+        coordinatesElement.textContent = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+        updatedElement.textContent = `Last updated: ${new Date(data.updatedAt).toLocaleTimeString()}`;
+        expiresElement.textContent = `Share ends: ${new Date(data.expiresAt).toLocaleTimeString()}`;
+        mapLink.href = `https://maps.google.com/?q=${latitude},${longitude}`;
+        mapLink.hidden = false;
+        statusElement.textContent = 'Location refreshes automatically while sharing is active.';
+      } catch (error) {
+        statusElement.textContent = `Unable to refresh location: ${error.message}`;
+      }
+    }
+
+    refreshLocation();
+    refreshTimer = window.setInterval(refreshLocation, 5000);
+  </script>
+</body>
+</html>
